@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "779825959200",
+    "project_id": "shelf-life-tracker-27",
+    "storage_bucket": "shelf-life-tracker-27.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:779825959200:android:fe1bd5246b93a1ac4a4745",
+        "android_client_info": {
+          "package_name": "com.example.shelf_life_tracker"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "779825959200-njva8fcoeblisso1c7396isn2v5c4t8f.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.shelf_life_tracker",
+            "certificate_hash": "f8bd0fc1e5ac6969a62312f62b3921bc1ee86e38"
+          }
+        },
+        {
+          "client_id": "779825959200-mue8g2oushhjgb4n1h73ue86qoepm2fu.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDQU1bTw9D6XyxmzqD9e6sefHQLh3FIHCs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "779825959200-mue8g2oushhjgb4n1h73ue86qoepm2fu.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "779825959200-27hsh0n1acu3beac58joukbts59u82cm.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.shelfLifeTracker"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

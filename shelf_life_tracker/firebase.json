@@ -1,0 +1,42 @@
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "shelf-life-tracker-27",
+          "appId": "1:779825959200:android:fe1bd5246b93a1ac4a4745",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "shelf-life-tracker-27",
+          "configurations": {
+            "android": "1:779825959200:android:fe1bd5246b93a1ac4a4745",
+            "ios": "1:779825959200:ios:4a21413738ef3b8b4a4745",
+            "macos": "1:779825959200:ios:4a21413738ef3b8b4a4745",
+            "web": "1:779825959200:web:aa613e240b9e95c64a4745",
+            "windows": "1:779825959200:web:4b13e1ba290d52ed4a4745"
+          }
+        }
+      }
+    }
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "disallowLegacyRuntimeConfig": true,
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ],
+      "predeploy": [
+        "npm --prefix \"$RESOURCE_DIR\" run lint"
+      ]
+    }
+  ]
+}
