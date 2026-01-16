@@ -9,6 +9,7 @@ import '../pages/transaction_page.dart' as transaction_page;
 import '../StoreOwner/report_page.dart' as report_page;
 import '../StoreOwner/staff_management_page.dart' as staff_management;
 import '../navigation.dart';
+import '../widgets/app_header.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key, this.role = UserRole.owner});
@@ -139,15 +140,53 @@ class _SettingsPageState extends State<SettingsPage> {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please fill both password fields')));
       return;
     }
+    bool isStrongPassword(String value) {
+      if (value.length < 8) return false;
+      final hasUpper = RegExp(r'[A-Z]').hasMatch(value);
+      final hasLower = RegExp(r'[a-z]').hasMatch(value);
+      final hasDigit = RegExp(r'\d').hasMatch(value);
+      final hasSymbol = RegExp(r'[!@#\$%^&*(),.?":{}|<>\-_=+]').hasMatch(value);
+      return hasUpper && hasLower && hasDigit && hasSymbol;
+    }
+
+    if (!isStrongPassword(newPwd)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('New password must be 8+ chars with upper, lower, number, and symbol')),
+      );
+      return;
+    }
     try {
-      await StoreRepository.instance.updateCurrentUserPassword(oldPassword: oldPwd, newPassword: newPwd);
+      // Update FirebaseAuth password with re-authentication
+      final authUser = FirebaseAuth.instance.currentUser;
+      if (authUser == null) {
+        throw Exception('You must be logged in to change password.');
+      }
+
+      final email = authUser.email ?? _emailDisplay;
+      if (email.isEmpty) {
+        throw Exception('No email associated with this account.');
+      }
+
+      final credential = EmailAuthProvider.credential(email: email, password: oldPwd);
+      await authUser.reauthenticateWithCredential(credential);
+      await authUser.updatePassword(newPwd);
+
+      // Update local repository user if present
+      if (StoreRepository.instance.currentUser != null) {
+        await StoreRepository.instance.updateCurrentUserPassword(oldPassword: oldPwd, newPassword: newPwd);
+      }
+
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Password updated')));
       _oldPasswordCtrl.clear();
       _newPasswordCtrl.clear();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+      String msg = e.toString();
+      if (msg.contains('wrong-password')) {
+        msg = 'Old password is incorrect.';
+      }
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
     }
   }
 
@@ -159,7 +198,11 @@ class _SettingsPageState extends State<SettingsPage> {
 
     if (!isLoggedIn) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Settings')),
+        appBar: buildAppBarWithLogoutAndNotifications(
+          context: context,
+          title: 'Settings',
+          role: widget.role,
+        ),
         body: Center(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -184,7 +227,11 @@ class _SettingsPageState extends State<SettingsPage> {
     final email = _emailDisplay.isNotEmpty ? _emailDisplay : (repoUser?.email ?? authUser?.email ?? '');
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Shelf Life Tracker')),
+      appBar: buildAppBarWithLogoutAndNotifications(
+        context: context,
+        title: 'Shelf Life Tracker',
+        role: widget.role,
+      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -260,10 +307,7 @@ class _SettingsPageState extends State<SettingsPage> {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: repoUser == null
-                  ? () => ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Password changes require a linked local profile.')))
-                  : _changePassword,
+                onPressed: _changePassword,
                 icon: const Icon(Icons.lock_reset),
                 label: const Text('Update Password'),
               ),

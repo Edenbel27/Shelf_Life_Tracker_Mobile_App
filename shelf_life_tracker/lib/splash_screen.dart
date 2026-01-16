@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'signup_page.dart' as signup_page;
 import 'Repository/store_repository.dart';
 import 'login_page.dart' as login_page;
 import 'pages/home_page.dart' as owner_home;

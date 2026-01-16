@@ -4,10 +4,10 @@ import 'package:flutter/material.dart';
 import '../Repository/store_repository.dart' show UserRole;
 import '../Settings/settings_page.dart' as settings_page;
 import '../navigation.dart';
-import '../notifications_page.dart';
 import '../pages/home_page.dart' as home_page;
 import '../pages/inventory_page.dart' as inventory_page;
 import '../pages/transaction_page.dart' as transaction_page;
+import '../widgets/app_header.dart';
 
 class StoreOwnerReportsPage extends StatefulWidget {
   const StoreOwnerReportsPage({super.key});
@@ -42,13 +42,18 @@ class _StoreOwnerReportsPageState extends State<StoreOwnerReportsPage> {
   }
 
   _PastDaySummary _pastDayFromHistory(List<_TransactionRecord> history) {
-    final cutoff = DateTime.now().subtract(const Duration(days: 1));
+    final now = DateTime.now();
+    final yesterdayStart = DateTime(now.year, now.month, now.day).subtract(const Duration(days: 1));
+    final yesterdayEnd = DateTime(now.year, now.month, now.day);
+
     double sales = 0;
     double purchases = 0;
     int count = 0;
 
     for (final h in history) {
-      if (h.timestamp == null || h.timestamp!.isBefore(cutoff)) continue;
+      if (h.timestamp == null || h.timestamp!.isBefore(yesterdayStart) || h.timestamp!.isAfter(yesterdayEnd)) {
+        continue;
+      }
       count++;
       final amt = h.effectiveAmount;
       if (h.type == 'sale') {
@@ -170,7 +175,11 @@ class _StoreOwnerReportsPageState extends State<StoreOwnerReportsPage> {
       builder: (context, snap) {
         if (snap.hasError) {
           return Scaffold(
-            appBar: AppBar(title: const Text('Shelf Life Tracker')),
+            appBar: buildAppBarWithLogoutAndNotifications(
+              context: context,
+              title: 'Shelf Life Tracker',
+              role: UserRole.owner,
+            ),
             body: Center(child: Text('Error loading reports: ${snap.error}')),
           );
         }
@@ -192,48 +201,38 @@ class _StoreOwnerReportsPageState extends State<StoreOwnerReportsPage> {
           }
         }
 
-        final profit = totalSales - totalPurchases;
-        final txCount = recent.length;
+        // final profit = totalSales - totalPurchases;
+        // final txCount = recent.length;
         final topSelling = _topSellingFromHistory(recent);
         final pastDay = _pastDayFromHistory(recent);
 
+        // Calculate today's sales and expenses for the cards
+        final todayStart = DateTime.now();
+        final todayRangeStart = DateTime(todayStart.year, todayStart.month, todayStart.day);
+        final todayRangeEnd = todayRangeStart.add(const Duration(days: 1));
+        final todayTransactions = history.where((h) =>
+          h.timestamp != null &&
+          h.timestamp!.isAfter(todayRangeStart) &&
+          h.timestamp!.isBefore(todayRangeEnd)
+        ).toList();
+        double todaySales = 0;
+        double todayPurchases = 0;
+        for (final h in todayTransactions) {
+          final amt = h.effectiveAmount;
+          if (h.type == 'sale') {
+            todaySales += amt;
+          } else {
+            todayPurchases += amt;
+          }
+        }
+        final todayProfit = todaySales - todayPurchases;
+        final todayTxCount = todayTransactions.length;
+
         return Scaffold(
-          appBar: AppBar(
-            title: const Text('Shelf Life Tracker'),
-            actions: [
-              StreamBuilder<QuerySnapshot>(
-                stream: FirebaseFirestore.instance
-                    .collection('users')
-                    .where('approved', isEqualTo: false)
-                    .snapshots(),
-                builder: (context, snapshot) {
-                  final hasPending = snapshot.hasData && snapshot.data!.docs.isNotEmpty;
-                  return Stack(
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.notifications_none_outlined),
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (_) => const NotificationsPage(role: UserRole.owner)),
-                          ).then((_) => setState(() {}));
-                        },
-                      ),
-                      if (hasPending)
-                        Positioned(
-                          right: 12,
-                          top: 12,
-                          child: Container(
-                            width: 10,
-                            height: 10,
-                            decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
-                          ),
-                        ),
-                    ],
-                  );
-                },
-              ),
-            ],
+          appBar: buildAppBarWithLogoutAndNotifications(
+            context: context,
+            title: 'Shelf Life Tracker',
+            role: UserRole.owner,
           ),
           body: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
@@ -244,25 +243,6 @@ class _StoreOwnerReportsPageState extends State<StoreOwnerReportsPage> {
                   child: Text('Reports', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
                 ),
                 const SizedBox(height: 8),
-                Row(
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.arrow_back_ios_new, size: 16),
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (_) => const home_page.HomePage(role: UserRole.owner)),
-                        );
-                      },
-                    ),
-                    const SizedBox(width: 6),
-                    const Text('Daily Profit Report', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-                  ],
-                ),
-                const SizedBox(height: 20),
-
-                Center(child: Text('Report Snapshot', style: TextStyle(color: Colors.grey.shade600))),
-                const SizedBox(height: 16),
 
                 Container(
                   width: double.infinity,
@@ -274,24 +254,16 @@ class _StoreOwnerReportsPageState extends State<StoreOwnerReportsPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Net Profit', style: TextStyle(color: Colors.white.withOpacity(0.8))),
+                      Text('Today\'s Profit', style: TextStyle(color: Colors.white.withOpacity(0.8))),
                       const SizedBox(height: 6),
                       Text(
-                        'Birr ${profit.toStringAsFixed(2)}',
+                        'Birr ${todayProfit.toStringAsFixed(2)}',
                         style: const TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 12),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          _MiniMetric(
-                            label: 'Profit Margin',
-                            value: totalSales == 0
-                                ? '0%'
-                                : '${((profit / totalSales) * 100).clamp(-999, 999).toStringAsFixed(1)}%',
-                          ),
-                          _MiniMetric(label: 'Transactions', value: txCount.toString()),
-                        ],
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: _MiniMetric(label: 'Transactions', value: todayTxCount.toString()),
                       ),
                     ],
                   ),
@@ -299,7 +271,7 @@ class _StoreOwnerReportsPageState extends State<StoreOwnerReportsPage> {
                 const SizedBox(height: 16),
 
                 _SectionCard(
-                  title: 'Last 24h Summary',
+                  title: 'Yesterday\'s Summary',
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -312,29 +284,6 @@ class _StoreOwnerReportsPageState extends State<StoreOwnerReportsPage> {
                         ],
                       ),
                       const SizedBox(height: 12),
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: _snapshotSavedToday
-                            ? Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: const [
-                                  Icon(Icons.check_circle, color: Colors.green),
-                                  SizedBox(width: 6),
-                                  Text('Snapshot saved', style: TextStyle(color: Colors.green, fontWeight: FontWeight.w600)),
-                                ],
-                              )
-                            : ElevatedButton.icon(
-                                onPressed: _savingSnapshot ? null : () => _savePastDaySnapshot(pastDay),
-                                icon: _savingSnapshot
-                                    ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
-                                    : const Icon(Icons.save_alt),
-                                label: Text(_savingSnapshot ? 'Saving...' : 'Save snapshot'),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.blue,
-                                  foregroundColor: Colors.white,
-                                ),
-                              ),
-                      ),
                     ],
                   ),
                 ),
@@ -345,7 +294,7 @@ class _StoreOwnerReportsPageState extends State<StoreOwnerReportsPage> {
                     Expanded(
                       child: _StatTile(
                         title: 'Total Sales',
-                          value: 'Birr ${totalSales.toStringAsFixed(2)}',
+                        value: 'Birr ${todaySales.toStringAsFixed(2)}',
                         change: '',
                         changePositive: true,
                         accent: Colors.blue,
@@ -355,7 +304,7 @@ class _StoreOwnerReportsPageState extends State<StoreOwnerReportsPage> {
                     Expanded(
                       child: _StatTile(
                         title: 'Total Expenses',
-                          value: 'Birr ${totalPurchases.toStringAsFixed(2)}',
+                        value: 'Birr ${todayPurchases.toStringAsFixed(2)}',
                         change: '',
                         changePositive: false,
                         accent: const Color(0xFFFF7043),

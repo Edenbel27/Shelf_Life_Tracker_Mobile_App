@@ -1,6 +1,8 @@
-import 'package:flutter/material.dart';
-import 'Repository/store_repository.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
+
+import 'Repository/store_repository.dart';
+import 'widgets/app_header.dart';
 
 const int _nearExpiryWindowDays = 7;
 
@@ -35,7 +37,11 @@ class _NotificationsPageState extends State<NotificationsPage> {
       .snapshots();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Shelf Life Tracker')),
+      appBar: buildAppBarWithLogoutAndNotifications(
+        context: context,
+        title: 'Shelf Life Tracker',
+        role: widget.role,
+      ),
       body: StreamBuilder<List<InventoryItem>>(
         stream: _inventoryStream(),
         builder: (context, snapshot) {
@@ -99,17 +105,17 @@ class _NotificationsPageState extends State<NotificationsPage> {
 
                 const Text('Expired Items', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
                 const SizedBox(height: 8),
-                if (expired.isEmpty) _EmptyRow('No expired items') else _ItemList(items: expired, color: Colors.red),
+                if (expired.isEmpty) _EmptyRow('No expired items') else _ItemList(items: expired, color: Colors.red, forcedStatus: _Status.expired),
                 const SizedBox(height: 16),
 
-                const Text('Near Expiry (next 7 days)', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                const Text('Near Expiry', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
                 const SizedBox(height: 8),
-                if (nearExpiry.isEmpty) _EmptyRow('No items near expiry') else _ItemList(items: nearExpiry, color: Colors.orange),
+                if (nearExpiry.isEmpty) _EmptyRow('No items near expiry') else _ItemList(items: nearExpiry, color: Colors.orange, forcedStatus: _Status.nearExpiry),
                 const SizedBox(height: 16),
 
                 const Text('Low Stock', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
                 const SizedBox(height: 8),
-                if (lowStock.isEmpty) _EmptyRow('No low stock items') else _ItemList(items: lowStock, color: Colors.amber),
+                if (lowStock.isEmpty) _EmptyRow('No low stock items') else _ItemList(items: lowStock, color: Colors.amber, forcedStatus: _Status.lowStock),
               ],
             ),
           );
@@ -145,7 +151,8 @@ class _EmptyRow extends StatelessWidget {
 class _ItemList extends StatelessWidget {
   final List<InventoryItem> items;
   final Color color;
-  const _ItemList({required this.items, required this.color});
+  final _Status? forcedStatus;
+  const _ItemList({required this.items, required this.color, this.forcedStatus});
 
   @override
   Widget build(BuildContext context) {
@@ -162,7 +169,7 @@ class _ItemList extends StatelessWidget {
             leading: CircleAvatar(backgroundColor: color.withOpacity(0.15), child: Icon(Icons.notifications, color: color)),
             title: Text(it.name),
             subtitle: Text(subtitle),
-            trailing: _StatusPill(item: it),
+            trailing: _StatusPill(item: it, forcedStatus: forcedStatus),
           ),
         );
       },
@@ -172,34 +179,90 @@ class _ItemList extends StatelessWidget {
 
 class _StatusPill extends StatelessWidget {
   final InventoryItem item;
-  const _StatusPill({required this.item});
+  final _Status? forcedStatus;
+  const _StatusPill({required this.item, this.forcedStatus});
+
   @override
   Widget build(BuildContext context) {
-    String label;
-    Color bg;
-    Color fg;
-    if (_isExpired(item)) {
-      label = 'Expired';
-      bg = Colors.red.shade100;
-      fg = Colors.red.shade800;
-    } else if (_isNearExpiry(item)) {
-      label = 'Near Expiry';
-      bg = Colors.orange.shade100;
-      fg = Colors.orange.shade800;
-    } else if (_isLowStock(item)) {
-      label = 'Low Stock';
-      bg = Colors.amber.shade100;
-      fg = Colors.amber.shade800;
-    } else {
-      label = 'OK';
-      bg = Colors.green.shade50;
-      fg = Colors.green.shade700;
-    }
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(12)),
-      child: Text(label, style: TextStyle(color: fg)),
+    final statuses = _statusesForItem(item, forcedStatus: forcedStatus);
+    return Wrap(
+      spacing: 6,
+      runSpacing: 4,
+      children: statuses.map((s) {
+        final colors = _statusColors(s);
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(color: colors.bg, borderRadius: BorderRadius.circular(12)),
+          child: Text(_statusLabel(s), style: TextStyle(color: colors.fg)),
+        );
+      }).toList(),
     );
+  }
+}
+
+enum _Status { expired, nearExpiry, lowStock, ok }
+
+_Status _statusForItem(InventoryItem item) {
+  if (_isExpired(item)) return _Status.expired;
+  if (_isNearExpiry(item)) return _Status.nearExpiry;
+  if (_isLowStock(item)) return _Status.lowStock;
+  return _Status.ok;
+}
+
+List<_Status> _statusesForItem(InventoryItem item, {_Status? forcedStatus}) {
+  final list = <_Status>[];
+  if (forcedStatus != null) list.add(forcedStatus);
+  if (_isExpired(item) && !list.contains(_Status.expired)) list.add(_Status.expired);
+  if (_isNearExpiry(item) && !list.contains(_Status.nearExpiry)) list.add(_Status.nearExpiry);
+  if (_isLowStock(item) && !list.contains(_Status.lowStock)) list.add(_Status.lowStock);
+  if (list.isEmpty) list.add(_Status.ok);
+
+  list.sort((a, b) => _statusPriority(a).compareTo(_statusPriority(b)));
+  return list;
+}
+
+int _statusPriority(_Status status) {
+  switch (status) {
+    case _Status.expired:
+      return 0;
+    case _Status.nearExpiry:
+      return 1;
+    case _Status.lowStock:
+      return 2;
+    case _Status.ok:
+      return 3;
+  }
+}
+
+class _StatusColors {
+  const _StatusColors({required this.bg, required this.fg});
+  final Color bg;
+  final Color fg;
+}
+
+_StatusColors _statusColors(_Status status) {
+  switch (status) {
+    case _Status.expired:
+      return _StatusColors(bg: Colors.red.shade100, fg: Colors.red.shade800);
+    case _Status.nearExpiry:
+      return _StatusColors(bg: Colors.orange.shade100, fg: Colors.orange.shade800);
+    case _Status.lowStock:
+      return _StatusColors(bg: Colors.amber.shade100, fg: Colors.amber.shade800);
+    case _Status.ok:
+      return _StatusColors(bg: Colors.green.shade50, fg: Colors.green.shade700);
+  }
+}
+
+String _statusLabel(_Status status) {
+  switch (status) {
+    case _Status.expired:
+      return 'Expired';
+    case _Status.nearExpiry:
+      return 'Near Expiry';
+    case _Status.lowStock:
+      return 'Low Stock';
+    case _Status.ok:
+      return 'OK';
   }
 }
 

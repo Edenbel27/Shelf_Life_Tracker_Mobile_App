@@ -1,5 +1,7 @@
-import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
+
+import '../widgets/app_header.dart';
 
 class ApprovalsPage extends StatefulWidget {
   const ApprovalsPage({super.key});
@@ -17,7 +19,10 @@ class _ApprovalsPageState extends State<ApprovalsPage> {
       .snapshots();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Shelf Life Tracker')),
+      appBar: buildAppBarWithLogoutAndNotifications(
+        context: context,
+        title: 'Shelf Life Tracker',
+      ),
       body: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
@@ -50,7 +55,7 @@ class _ApprovalsPageState extends State<ApprovalsPage> {
                           title: Text('${u['firstName'] ?? ''} ${u['lastName'] ?? ''}'.trim().isEmpty
                               ? 'Pending user'
                               : '${u['firstName'] ?? ''} ${u['lastName'] ?? ''}'.trim()),
-                          subtitle: Text('${u['email'] ?? ''}${u['phone'] != null && (u['phone'] as String).isNotEmpty ? ' • ' + (u['phone'] as String) : ''}'),
+                          subtitle: Text('${u['email'] ?? ''}${u['phone'] != null && (u['phone'] as String).isNotEmpty ? ' • ${u['phone'] as String}' : ''}'),
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [

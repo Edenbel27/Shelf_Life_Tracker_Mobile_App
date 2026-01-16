@@ -4,6 +4,7 @@ import '../Repository/store_repository.dart' show UserRole;
 import '../Settings/settings_page.dart' as settings_page;
 import '../StoreOwner/report_page.dart' as report_page;
 import '../navigation.dart';
+import '../widgets/app_header.dart';
 import 'home_page.dart' as home_page;
 import 'purchase_page.dart' as purchase_page;
 import 'transaction_page.dart' as transaction_page;
@@ -18,27 +19,33 @@ class InventoryPage extends StatefulWidget {
 }
 
 class _InventoryPageState extends State<InventoryPage> {
+  final TextEditingController _searchCtrl = TextEditingController();
+  final FocusNode _searchFocus = FocusNode();
   String _search = '';
   String _selectedCategory = 'All';
 
   bool get _isOwner => widget.role == UserRole.owner;
 
   @override
+  void dispose() {
+    _searchFocus.dispose();
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  void _applySearch(String value) {
+    if (!mounted) return;
+    setState(() => _search = value.trim());
+    _searchFocus.requestFocus();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Shelf Life Tracker'),
-        actions: [
-          if (_isOwner)
-            TextButton.icon(
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const purchase_page.PurchasePage()),
-              ),
-              icon: const Icon(Icons.add, color: Colors.white),
-              label: const Text('Add / Purchase', style: TextStyle(color: Colors.white)),
-            ),
-        ],
+      appBar: buildAppBarWithLogoutAndNotifications(
+        context: context,
+        title: 'Shelf Life Tracker',
+        role: widget.role,
       ),
       body: StreamBuilder<List<InventoryItem>>(
         stream: _itemsStream(),
@@ -66,13 +73,22 @@ class _InventoryPageState extends State<InventoryPage> {
                 ),
                 const SizedBox(height: 8),
                 TextField(
+                  controller: _searchCtrl,
+                  focusNode: _searchFocus,
+                  autofocus: false,
                   decoration: const InputDecoration(
                     hintText: 'Search items...',
                     prefixIcon: Icon(Icons.search),
                     border: OutlineInputBorder(),
                     isDense: true,
                   ),
-                  onChanged: (value) => setState(() => _search = value.trim()),
+                  textInputAction: TextInputAction.search,
+                  onSubmitted: _applySearch,
+                  onChanged: (value) {
+                    if (value.isEmpty) {
+                      _applySearch('');
+                    }
+                  },
                 ),
                 const SizedBox(height: 10),
                 SizedBox(
@@ -155,7 +171,7 @@ class _InventoryPageState extends State<InventoryPage> {
                                       children: [
                                         Text('Birr ${item.sellingPrice.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold)),
                                         const SizedBox(height: 6),
-                                        Text('Profit: Birr ${potentialProfit}', style: const TextStyle(color: Colors.green)),
+                                        Text('Profit: Birr $potentialProfit', style: const TextStyle(color: Colors.green)),
                                         if (_isOwner) ...[
                                           const SizedBox(height: 8),
                                           Row(

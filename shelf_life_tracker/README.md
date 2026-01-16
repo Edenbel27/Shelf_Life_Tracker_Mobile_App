@@ -87,3 +87,6 @@ flutter test
 - Firebase init errors: verify `google-services.json` / `GoogleService-Info.plist` and `firebase_options.dart` match your Firebase project.
 - Auth failures: ensure Email/Password and Google providers are enabled in Firebase console.
 - Permission errors: update Firestore security rules for your environment.
+adb kill-server
+adb start-server
+adb devices

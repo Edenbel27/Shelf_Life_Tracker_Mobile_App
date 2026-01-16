@@ -2,12 +2,13 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'dart:async';
 
 import '../Repository/store_repository.dart' show UserRole;
 import '../Settings/settings_page.dart' as settings_page;
 import '../StoreOwner/report_page.dart' as report_page;
 import '../navigation.dart';
-import '../notifications_page.dart';
+import '../widgets/app_header.dart';
 import 'home_page.dart' as home_page;
 import 'inventory_page.dart' as inventory_page;
 import 'purchase_page.dart' as purchase_page;
@@ -21,7 +22,7 @@ class TransactionsPage extends StatefulWidget {
   State<TransactionsPage> createState() => _TransactionsPageState();
 }
 
-class _TransactionsPageState extends State<TransactionsPage> {
+class _TransactionsPageState extends State<TransactionsPage> with TickerProviderStateMixin {
   bool _showHistory = false;
   String _mode = 'sale';
   String _historyFilter = 'all';
@@ -49,6 +50,9 @@ class _TransactionsPageState extends State<TransactionsPage> {
   final TextEditingController _purchasePriceController = TextEditingController();
   final TextEditingController _sellingPriceController = TextEditingController();
   final TextEditingController _notesController = TextEditingController();
+  final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
+  bool _isSaving = false;
 
   @override
   void initState() {
@@ -59,6 +63,21 @@ class _TransactionsPageState extends State<TransactionsPage> {
       }
     });
   }
+  
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Enforce sale-only mode for non-owners without mutating in build()
+    if (!_canPurchase && _mode != 'sale') {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() {
+          _mode = 'sale';
+          _manualMode = false;
+        });
+      });
+    }
+    }
 
   @override
   void dispose() {
@@ -75,6 +94,8 @@ class _TransactionsPageState extends State<TransactionsPage> {
     _purchasePriceController.dispose();
     _sellingPriceController.dispose();
     _notesController.dispose();
+    _searchController.dispose();
+    _searchFocusNode.dispose();
     super.dispose();
   }
 
@@ -106,10 +127,24 @@ class _TransactionsPageState extends State<TransactionsPage> {
         .map((snap) => snap.docs.map(TransactionRecord.fromDoc).toList());
   }
 
+  void _updateSearch(String value) {
+    if (!mounted) return;
+    setState(() {
+      _search = value.trim();
+    });
+    _searchFocusNode.requestFocus();
+  }
+
   List<InventoryItem> _filteredItems(List<InventoryItem> items) {
-    if (_search.isEmpty) return items;
+    // Exclude expired items everywhere; additionally exclude zero-stock in sale mode
+    final base = items
+        .where((it) => it.expiresInDays > 0)
+        .where((it) => _mode != 'sale' || it.quantity > 0)
+        .toList();
+
+    if (_search.isEmpty) return base;
     final q = _search.toLowerCase();
-    return items.where((it) => it.name.toLowerCase().contains(q)).toList();
+    return base.where((it) => it.name.toLowerCase().contains(q)).toList();
   }
 
   List<TransactionRecord> _filteredHistory(List<TransactionRecord> history) {
@@ -127,7 +162,8 @@ class _TransactionsPageState extends State<TransactionsPage> {
       _selectedItem = item;
       _nameController.text = item.name;
       _categoryController.text = item.category;
-      _priceController.text = item.sellingPrice.toStringAsFixed(2);
+      final selectedPrice = _mode == 'sale' ? item.sellingPrice : item.purchasePrice;
+      _priceController.text = selectedPrice.toStringAsFixed(2);
       if (_qtyController.text.trim().isEmpty) {
         _qtyController.text = '1';
       }
@@ -155,9 +191,14 @@ class _TransactionsPageState extends State<TransactionsPage> {
   }
 
   Future<void> _submitTransaction() async {
-    if (!(_selectionValid || _manualValid)) return;
-
+    if (_isSaving) return;
+    setState(() => _isSaving = true);
+    if (!(_selectionValid || _manualValid)) {
+      setState(() => _isSaving = false);
+      return;
+    }
     if (!_canPurchase && _mode != 'sale') {
+      setState(() => _isSaving = false);
       setState(() {
         _mode = 'sale';
         _manualMode = false;
@@ -165,16 +206,18 @@ class _TransactionsPageState extends State<TransactionsPage> {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Only owners can record purchases.')));
       return;
     }
-
     final qty = int.tryParse(_qtyController.text.trim()) ?? 0;
     if (qty <= 0) {
+      setState(() => _isSaving = false);
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Quantity must be greater than zero.')));
       return;
     }
-
     try {
       if (_mode == 'sale') {
-        if (_selectedItem == null) return;
+        if (_selectedItem == null) {
+          setState(() => _isSaving = false);
+          return;
+        }
         final unitPrice = double.tryParse(_priceController.text.trim());
         await _recordSale(_selectedItem!, qty, priceOverride: unitPrice);
         setState(() {
@@ -183,9 +226,9 @@ class _TransactionsPageState extends State<TransactionsPage> {
           _priceController.clear();
         });
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Sale recorded.')));
+        setState(() => _isSaving = false);
         return;
       }
-
       if (_manualMode) {
         await _recordManualPurchase(qty);
         setState(() {
@@ -193,24 +236,34 @@ class _TransactionsPageState extends State<TransactionsPage> {
           _manualMode = false;
           _qtyController.clear();
           _priceController.clear();
+          _selectedCategory = _categories.first;
         });
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Purchase recorded.')));
+        setState(() => _isSaving = false);
         return;
       }
-
-      if (_selectedItem == null) return;
+      if (_selectedItem == null) {
+        setState(() => _isSaving = false);
+        return;
+      }
       final price = double.tryParse(_priceController.text.trim());
       await _recordPurchase(_selectedItem!, qty, price, price);
       setState(() {
         _selectedItem = null;
+        _manualMode = false;
         _qtyController.clear();
         _priceController.clear();
       });
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Purchase recorded.')));
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Purchase recorded.')));
+      });
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
       );
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
     }
   }
 
@@ -223,7 +276,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
       if (!snap.exists) {
         throw Exception('Item not found');
       }
-      final data = snap.data() as Map<String, dynamic>? ?? {};
+      final data = snap.data() ?? {};
       final currentQty = ((data['quantity'] ?? 0) as num).toInt();
       if (qty > currentQty) {
         throw Exception('Insufficient stock');
@@ -261,7 +314,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
       if (!snap.exists) {
         throw Exception('Item not found');
       }
-      final data = snap.data() as Map<String, dynamic>? ?? {};
+      final data = snap.data() ?? {};
       final currentQty = ((data['quantity'] ?? 0) as num).toInt();
       final newPurchase = purchasePrice != null && purchasePrice > 0 ? purchasePrice : (data['purchasePrice'] ?? 0).toDouble();
       final newSelling = sellingPrice != null && sellingPrice > 0 ? sellingPrice : (data['sellingPrice'] ?? 0).toDouble();
@@ -488,8 +541,13 @@ class _TransactionsPageState extends State<TransactionsPage> {
               onTap: () => setState(() {
                 _mode = 'sale';
                 _manualMode = false;
+                _selectedItem = null;
+                if (_qtyController.text.trim().isEmpty) {
+                  _qtyController.text = '1';
+                }
+                _priceController.clear();
               }),
-            ),
+          ), 
           ),
           Expanded(
             child: _ModeSegment(
@@ -500,7 +558,15 @@ class _TransactionsPageState extends State<TransactionsPage> {
               disabled: !canPurchase,
               onTap: () {
                 if (!canPurchase) return;
-                setState(() => _mode = 'purchase');
+                setState(() {
+                  _mode = 'purchase';
+                  _manualMode = false;
+                  _selectedItem = null;
+                  if (_qtyController.text.trim().isEmpty) {
+                    _qtyController.text = '1';
+                  }
+                  _priceController.clear();
+                });
               },
             ),
           ),
@@ -525,52 +591,16 @@ class _TransactionsPageState extends State<TransactionsPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_canPurchase && _mode != 'sale') {
-      _mode = 'sale';
-      _manualMode = false;
-    }
     final isSale = _mode == 'sale';
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Shelf Life Tracker'),
+      appBar: buildAppBarWithLogoutAndNotifications(
+        context: context,
+        title: 'Shelf Life Tracker',
+        role: widget.role,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.pop(context),
         ),
-        actions: [
-          StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance
-                .collection('users')
-                .where('approved', isEqualTo: false)
-                .snapshots(),
-            builder: (context, snapshot) {
-              final hasPending = widget.role == UserRole.owner && snapshot.hasData && snapshot.data!.docs.isNotEmpty;
-              return Stack(
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.notifications_none_outlined),
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => NotificationsPage(role: widget.role)),
-                      ).then((_) => setState(() {}));
-                    },
-                  ),
-                  if (hasPending)
-                    Positioned(
-                      right: 12,
-                      top: 12,
-                      child: Container(
-                        width: 10,
-                        height: 10,
-                        decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
-                      ),
-                    ),
-                ],
-              );
-            },
-          ),
-        ],
       ),
       body: StreamBuilder<List<InventoryItem>>(
         stream: _inventoryStream(),
@@ -620,10 +650,22 @@ class _TransactionsPageState extends State<TransactionsPage> {
                   ],
                 ),
                 const SizedBox(height: 12),
-                if (!_showHistory)
-                  _buildNewTransactionView(items, isSale)
-                else
-                  Expanded(child: _buildHistoryView()),
+                Expanded(
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 150),
+                    switchInCurve: Curves.easeOut,
+                    switchOutCurve: Curves.easeIn,
+                    child: _showHistory
+                        ? SizedBox.expand(
+                            key: const ValueKey('history'),
+                            child: _buildHistoryView(),
+                          )
+                        : SizedBox.expand(
+                            key: const ValueKey('new'),
+                            child: _buildNewTransactionView(items, isSale),
+                          ),
+                  ),
+                ),
               ],
             ),
           );
@@ -655,57 +697,109 @@ class _TransactionsPageState extends State<TransactionsPage> {
     final canPurchase = _canPurchase;
     final filteredItems = _filteredItems(items);
 
-    return Expanded(
-      child: SingleChildScrollView(
-        controller: _formScrollController,
-        padding: const EdgeInsets.only(bottom: 16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Transaction Type', style: TextStyle(color: Colors.grey.shade700)),
-            const SizedBox(height: 6),
-            _buildModeSwitch(isSale, canPurchase),
-            const SizedBox(height: 12),
-            _buildModeBadge(isSale),
-            const SizedBox(height: 14),
-            Text('Select Item', style: TextStyle(color: Colors.grey.shade700)),
-            const SizedBox(height: 6),
-            TextField(
-              decoration: InputDecoration(
-                hintText: 'Search items...',
-                prefixIcon: const Icon(Icons.search),
-                isDense: true,
-                border: OutlineInputBorder(borderSide: BorderSide(color: Colors.grey.shade300)),
-                enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.grey.shade300)),
-                focusedBorder: const OutlineInputBorder(borderSide: BorderSide(color: Colors.blue, width: 1.5)),
-                fillColor: Colors.grey.shade100,
-                filled: true,
-              ),
-              onChanged: (value) => setState(() => _search = value),
+    // Keep the primary action anchored in view so it is not hidden behind the
+    // keyboard or device safe areas on smaller phones.
+    return Column(
+      children: [
+        Expanded(
+          child: SingleChildScrollView(
+            controller: _formScrollController,
+            padding: const EdgeInsets.only(bottom: 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Transaction Type', style: TextStyle(color: Colors.grey.shade700)),
+                const SizedBox(height: 6),
+                _buildModeSwitch(isSale, canPurchase),
+                const SizedBox(height: 12),
+                _buildModeBadge(isSale),
+                const SizedBox(height: 14),
+                Text('Select Item', style: TextStyle(color: Colors.grey.shade700)),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: _searchController,
+                  focusNode: _searchFocusNode,
+                  key: const ValueKey('item-search'),
+                  decoration: InputDecoration(
+                    hintText: 'Search items...',
+                    prefixIcon: const Icon(Icons.search),
+                    isDense: true,
+                    border: OutlineInputBorder(borderSide: BorderSide(color: Colors.grey.shade300)),
+                    enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.grey.shade300)),
+                    focusedBorder: const OutlineInputBorder(borderSide: BorderSide(color: Colors.blue, width: 1.5)),
+                    fillColor: Colors.grey.shade100,
+                    filled: true,
+                  ),
+                  textInputAction: TextInputAction.search,
+                  onSubmitted: _updateSearch,
+                  onChanged: (value) {
+                    if (value.isEmpty) {
+                      _updateSearch('');
+                    }
+                  },
+                ),
+                const SizedBox(height: 10),
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 150),
+                  switchInCurve: Curves.easeOut,
+                  switchOutCurve: Curves.easeIn,
+                  child: _buildModeContent(
+                    isSale: isSale,
+                    filteredItems: filteredItems,
+                    canPurchase: canPurchase,
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 10),
-            if (_manualMode) ...[
-              _buildManualBackButton(),
-              const SizedBox(height: 8),
-              _buildManualForm(),
-            ] else if (isSale) ...[
-              _buildSaleList(filteredItems),
-            ] else ...[
-              _buildPurchaseList(filteredItems),
-              const SizedBox(height: 12),
-              if (canPurchase) _buildManualEntryCallout(),
-            ],
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: _selectionValid || _manualValid ? _submitTransaction : null,
-                child: Text(isSale ? 'Record Sale' : 'Record Purchase'),
-              ),
-            ),
-          ],
+          ),
         ),
-      ),
+        SafeArea(
+          minimum: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+          child: SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _isSaving ? null : _submitTransaction,
+              icon: _isSaving
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Icon(Icons.save),
+              label: Text(_isSaving ? 'Saving...' : (_mode == 'sale' ? 'Save Sale' : 'Save Purchase')),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildModeContent({required bool isSale, required List<InventoryItem> filteredItems, required bool canPurchase}) {
+    if (_manualMode) {
+      return Column(
+        key: const ValueKey('manual'),
+        children: [
+          _buildManualBackButton(),
+          const SizedBox(height: 8),
+          _buildManualForm(),
+        ],
+      );
+    }
+
+    if (isSale) {
+      return Container(
+        key: const ValueKey('sale'),
+        child: _buildSaleList(filteredItems),
+      );
+    }
+
+    return Column(
+      key: const ValueKey('purchase'),
+      children: [
+        _buildPurchaseList(filteredItems),
+        const SizedBox(height: 12),
+        if (canPurchase) _buildManualEntryCallout(),
+      ],
     );
   }
 
@@ -894,47 +988,59 @@ class _TransactionsPageState extends State<TransactionsPage> {
                     children: [
                       ListTile(
                         onTap: () {
-                          _selectItem(item);
-                          _scrollQtyIntoView(fieldKey: _qtySelectedKey);
+                          if (isSelected) {
+                            setState(() {
+                              _selectedItem = null;
+                              _manualMode = false;
+                            });
+                          } else {
+                            _selectItem(item);
+                            _scrollQtyIntoView(fieldKey: _qtySelectedKey);
+                          }
                         },
                         title: Text(item.name, style: const TextStyle(fontWeight: FontWeight.w700)),
                         subtitle: Text('${item.category} · Stock: ${item.quantity}', style: TextStyle(color: Colors.grey.shade700)),
                         trailing: Icon(isSelected ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down),
                       ),
-                      if (isSelected)
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text('Quantity', style: TextStyle(color: Colors.grey.shade800, fontWeight: FontWeight.w600)),
-                              const SizedBox(height: 6),
-                              TextField(
-                                key: _qtySelectedKey,
-                                controller: _qtyController,
-                                focusNode: _qtyFocusNode,
-                                keyboardType: TextInputType.number,
-                                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                                onChanged: (_) {},
-                                decoration: const InputDecoration(
-                                  hintText: 'Enter quantity',
-                                  border: OutlineInputBorder(),
+                      AnimatedSize(
+                        duration: const Duration(milliseconds: 150),
+                        curve: Curves.easeOut,
+                        child: isSelected
+                            ? Padding(
+                                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text('Quantity', style: TextStyle(color: Colors.grey.shade800, fontWeight: FontWeight.w600)),
+                                    const SizedBox(height: 6),
+                                    TextField(
+                                      key: _qtySelectedKey,
+                                      controller: _qtyController,
+                                      focusNode: _qtyFocusNode,
+                                      keyboardType: TextInputType.number,
+                                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                                      onChanged: (_) {},
+                                      decoration: const InputDecoration(
+                                        hintText: 'Enter quantity',
+                                        border: OutlineInputBorder(),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 10),
+                                    Text('Unit Price', style: TextStyle(color: Colors.grey.shade800, fontWeight: FontWeight.w600)),
+                                    const SizedBox(height: 6),
+                                    TextField(
+                                      controller: _priceController,
+                                      readOnly: true,
+                                      decoration: InputDecoration(
+                                        hintText: 'Birr ${item.sellingPrice.toStringAsFixed(2)}',
+                                        border: const OutlineInputBorder(),
+                                      ),
+                                    ),
+                                  ],
                                 ),
-                              ),
-                              const SizedBox(height: 10),
-                              Text('Unit Price', style: TextStyle(color: Colors.grey.shade800, fontWeight: FontWeight.w600)),
-                              const SizedBox(height: 6),
-                              TextField(
-                                controller: _priceController,
-                                readOnly: true,
-                                decoration: InputDecoration(
-                                  hintText: 'Birr ${item.sellingPrice.toStringAsFixed(2)}',
-                                  border: const OutlineInputBorder(),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                              )
+                            : const SizedBox.shrink(),
+                      ),
                     ],
                   ),
                 );
@@ -984,48 +1090,80 @@ class _TransactionsPageState extends State<TransactionsPage> {
                     children: [
                       ListTile(
                         onTap: () {
-                          _selectItem(item);
-                          _scrollQtyIntoView(fieldKey: _qtySelectedKey);
+                          if (isSelected) {
+                            setState(() {
+                              _selectedItem = null;
+                              _manualMode = false;
+                            });
+                          } else {
+                            _selectItem(item);
+                            _scrollQtyIntoView(fieldKey: _qtySelectedKey);
+                          }
                         },
                         title: Text(item.name, style: const TextStyle(fontWeight: FontWeight.w700)),
                         subtitle: Text('${item.category} · Stock: ${item.quantity}', style: TextStyle(color: Colors.grey.shade700)),
-                        trailing: Text('Birr ${item.sellingPrice.toStringAsFixed(2)}'),
-                      ),
-                      if (isSelected)
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text('Quantity', style: TextStyle(color: Colors.grey.shade800, fontWeight: FontWeight.w600)),
-                              const SizedBox(height: 6),
-                              TextField(
-                                key: _qtySelectedKey,
-                                controller: _qtyController,
-                                focusNode: _qtyFocusNode,
-                                keyboardType: TextInputType.number,
-                                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                                onChanged: (_) {},
-                                decoration: const InputDecoration(
-                                  hintText: 'Enter quantity',
-                                  border: OutlineInputBorder(),
-                                ),
-                              ),
-                              const SizedBox(height: 10),
-                              Text('Purchase Price', style: TextStyle(color: Colors.grey.shade800, fontWeight: FontWeight.w600)),
-                              const SizedBox(height: 6),
-                              TextField(
-                                controller: _priceController,
-                                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                                onChanged: (_) {},
-                                decoration: InputDecoration(
-                                  hintText: 'Birr ${item.purchasePrice.toStringAsFixed(2)}',
-                                  border: const OutlineInputBorder(),
-                                ),
-                              ),
-                            ],
-                          ),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text('Birr ${item.sellingPrice.toStringAsFixed(2)}'),
+                            const SizedBox(width: 6),
+                            IconButton(
+                              icon: Icon(isSelected ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down),
+                              onPressed: () {
+                                if (isSelected) {
+                                  setState(() {
+                                    _selectedItem = null;
+                                    _manualMode = false;
+                                  });
+                                } else {
+                                  _selectItem(item);
+                                  _scrollQtyIntoView(fieldKey: _qtySelectedKey);
+                                }
+                              },
+                            ),
+                          ],
                         ),
+                      ),
+                      AnimatedSize(
+                        duration: const Duration(milliseconds: 150),
+                        curve: Curves.easeOut,
+                        child: isSelected
+                            ? Padding(
+                                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text('Quantity', style: TextStyle(color: Colors.grey.shade800, fontWeight: FontWeight.w600)),
+                                    const SizedBox(height: 6),
+                                    TextField(
+                                      key: _qtySelectedKey,
+                                      controller: _qtyController,
+                                      focusNode: _qtyFocusNode,
+                                      keyboardType: TextInputType.number,
+                                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                                      onChanged: (_) {},
+                                      decoration: const InputDecoration(
+                                        hintText: 'Enter quantity',
+                                        border: OutlineInputBorder(),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 10),
+                                    Text('Purchase Price', style: TextStyle(color: Colors.grey.shade800, fontWeight: FontWeight.w600)),
+                                    const SizedBox(height: 6),
+                                    TextField(
+                                      controller: _priceController,
+                                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                      onChanged: (_) {},
+                                      decoration: InputDecoration(
+                                        hintText: 'Birr ${item.purchasePrice.toStringAsFixed(2)}',
+                                        border: const OutlineInputBorder(),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              )
+                            : const SizedBox.shrink(),
+                      ),
                     ],
                   ),
                 );
@@ -1130,6 +1268,8 @@ class _TransactionsPageState extends State<TransactionsPage> {
             ),
             const SizedBox(height: 10),
             TextField(
+              controller: _searchController,
+              focusNode: _searchFocusNode,
               decoration: InputDecoration(
                 hintText: 'Search history...',
                 prefixIcon: const Icon(Icons.search),
@@ -1140,7 +1280,13 @@ class _TransactionsPageState extends State<TransactionsPage> {
                 fillColor: Colors.grey.shade100,
                 filled: true,
               ),
-              onChanged: (value) => setState(() => _search = value),
+              textInputAction: TextInputAction.search,
+              onSubmitted: _updateSearch,
+              onChanged: (value) {
+                if (value.isEmpty) {
+                  _updateSearch('');
+                }
+              },
             ),
             const SizedBox(height: 10),
             Expanded(

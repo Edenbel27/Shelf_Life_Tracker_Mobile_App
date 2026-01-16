@@ -1,5 +1,7 @@
-import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
+
+import '../widgets/app_header.dart';
 
 class StaffManagementPage extends StatefulWidget {
   const StaffManagementPage({super.key});
@@ -45,7 +47,10 @@ class _StaffManagementPageState extends State<StaffManagementPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Staff Management')),
+      appBar: buildAppBarWithLogoutAndNotifications(
+        context: context,
+        title: 'Staff Management',
+      ),
       body: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(

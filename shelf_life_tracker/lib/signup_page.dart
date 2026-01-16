@@ -35,6 +35,15 @@ class _SignupPageState extends State<SignupPage> {
     _passwordCtrl.dispose();
     super.dispose();
   }
+  
+  bool _isStrongPassword(String value) {
+    if (value.length < 8) return false;
+    final hasUpper = RegExp(r'[A-Z]').hasMatch(value);
+    final hasLower = RegExp(r'[a-z]').hasMatch(value);
+    final hasDigit = RegExp(r'\d').hasMatch(value);
+    final hasSymbol = RegExp(r'[!@#\$%^&*(),.?":{}|<>\-_=+]').hasMatch(value);
+    return hasUpper && hasLower && hasDigit && hasSymbol;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -190,9 +199,9 @@ class _SignupPageState extends State<SignupPage> {
                               );
                               return;
                             }
-                            if (pass.length < 6) {
+                            if (!_isStrongPassword(pass)) {
                               ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('Password must be at least 6 characters')),
+                                const SnackBar(content: Text('Password must be 8+ chars with upper, lower, number, and symbol')),
                               );
                               return;
                             }

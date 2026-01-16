@@ -1,5 +1,7 @@
-import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
+
+import '../widgets/app_header.dart';
 
 class PurchasePage extends StatefulWidget {
   const PurchasePage({super.key});
@@ -16,6 +18,7 @@ class _PurchasePageState extends State<PurchasePage> {
   final _sellingPriceCtrl = TextEditingController();
   final _alertThresholdCtrl = TextEditingController(text: '3');
   DateTime? _expiryDate;
+  bool _isSaving = false;
 
   @override
   void dispose() {
@@ -42,6 +45,8 @@ class _PurchasePageState extends State<PurchasePage> {
   }
 
   Future<void> _submit() async {
+    if (_isSaving) return;
+    setState(() => _isSaving = true);
     final name = _nameCtrl.text.trim();
     final category = _categoryCtrl.text.trim();
     final qty = int.tryParse(_qtyCtrl.text.trim());
@@ -53,6 +58,7 @@ class _PurchasePageState extends State<PurchasePage> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please fill all fields and pick an expiry date')),
       );
+      setState(() => _isSaving = false);
       return;
     }
 
@@ -133,21 +139,17 @@ class _PurchasePageState extends State<PurchasePage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(e.toString())),
       );
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Shelf Life Tracker'),
-        actions: [
-          TextButton.icon(
-            onPressed: _submit,
-            icon: const Icon(Icons.save, color: Colors.white),
-            label: const Text('Save', style: TextStyle(color: Colors.white)),
-          ),
-        ],
+      appBar: buildAppBarWithLogoutAndNotifications(
+        context: context,
+        title: 'Shelf Life Tracker',
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -217,9 +219,15 @@ class _PurchasePageState extends State<PurchasePage> {
               width: double.infinity,
               height: 48,
               child: ElevatedButton.icon(
-                onPressed: _submit,
-                icon: const Icon(Icons.save),
-                label: const Text('Save Purchase'),
+                onPressed: _isSaving ? null : _submit,
+                icon: _isSaving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Icon(Icons.save),
+                label: Text(_isSaving ? 'Saving...' : 'Save Purchase'),
               ),
             ),
           ],

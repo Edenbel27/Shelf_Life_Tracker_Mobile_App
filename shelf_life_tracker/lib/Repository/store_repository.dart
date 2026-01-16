@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 /// Shared models for store data used across pages.
 @immutable
@@ -241,8 +242,17 @@ class StoreRepository {
   }
 
   Future<void> deleteStaff(String email) async {
+    // Remove staff from local list
     _users.removeWhere((u) => u.email.toLowerCase() == email.toLowerCase() && u.role == UserRole.staff);
     await _saveUsers();
+
+    // Remove staff from Firebase Firestore
+    try {
+      final firestore = FirebaseFirestore.instance;
+      await firestore.collection('staff').doc(email).delete();
+    } catch (e) {
+      debugPrint('Error deleting staff from Firebase: $e');
+    }
   }
 
   /// Returns the logged-in user on success; throws on failure.
